@@ -1,44 +1,88 @@
-const JSON_HEADERS = { 'Content-Type': 'application/json', Accept: 'application/json' };
+// Session auth means every write needs the CSRF token. Laravel rotates the token
+// whenever the session is regenerated (login, logout), so responses that cause a
+// rotation hand back the new one and we keep it here.
+let csrfToken = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+
+function jsonHeaders() {
+    return {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-CSRF-TOKEN': csrfToken,
+    };
+}
+
+function uploadHeaders() {
+    return { Accept: 'application/json', 'X-CSRF-TOKEN': csrfToken };
+}
 
 async function handle(response) {
     if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        throw new Error(body.message || `Request failed (${response.status})`);
+        const firstError = body.errors ? Object.values(body.errors)[0]?.[0] : null;
+        const error = new Error(firstError || body.message || `Request failed (${response.status})`);
+        error.status = response.status;
+        throw error;
     }
     if (response.status === 204) return null;
-    return response.json();
+
+    const body = await response.json();
+    if (body?.csrf_token) csrfToken = body.csrf_token;
+
+    return body;
+}
+
+export function getUser() {
+    return fetch('/api/user', { headers: jsonHeaders() })
+        .then(handle)
+        .then((body) => ({ user: body.user, guestMode: Boolean(body.guest_mode) }));
+}
+
+export function register(payload) {
+    return fetch('/api/register', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(payload) })
+        .then(handle)
+        .then((body) => body.user);
+}
+
+export function login(payload) {
+    return fetch('/api/login', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(payload) })
+        .then(handle)
+        .then((body) => body.user);
+}
+
+export function logout() {
+    return fetch('/api/logout', { method: 'POST', headers: jsonHeaders() }).then(handle);
 }
 
 export function listDocuments() {
-    return fetch('/api/documents', { headers: JSON_HEADERS }).then(handle);
+    return fetch('/api/documents', { headers: jsonHeaders() }).then(handle);
 }
 
 export function uploadDocument(file) {
     const formData = new FormData();
     formData.append('file', file);
-    return fetch('/api/documents', { method: 'POST', body: formData, headers: { Accept: 'application/json' } }).then(handle);
+    return fetch('/api/documents', { method: 'POST', body: formData, headers: uploadHeaders() }).then(handle);
 }
 
 export function deleteDocument(id) {
-    return fetch(`/api/documents/${id}`, { method: 'DELETE', headers: JSON_HEADERS }).then(handle);
+    return fetch(`/api/documents/${id}`, { method: 'DELETE', headers: jsonHeaders() }).then(handle);
 }
 
 export function createConversation() {
-    return fetch('/api/conversations', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({}) }).then(handle);
+    return fetch('/api/conversations', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({}) }).then(handle);
 }
 
 export function getConversation(id) {
-    return fetch(`/api/conversations/${id}`, { headers: JSON_HEADERS }).then(handle);
+    return fetch(`/api/conversations/${id}`, { headers: jsonHeaders() }).then(handle);
 }
 
 export function deleteConversation(id) {
-    return fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: JSON_HEADERS }).then(handle);
+    return fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: jsonHeaders() }).then(handle);
 }
 
 export async function streamMessage(conversationId, content, { onSources, onToken, onDone, onError }) {
     const response = await fetch(`/api/conversations/${conversationId}/messages`, {
         method: 'POST',
-        headers: JSON_HEADERS,
+        headers: jsonHeaders(),
         body: JSON.stringify({ content }),
     });
 

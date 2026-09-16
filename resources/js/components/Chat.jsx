@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { createConversation, getConversation, streamMessage } from '../api';
 
-const STORAGE_KEY = 'rag_chatbot_conversation_id';
+export const CONVERSATION_STORAGE_KEY = 'rag_chatbot_conversation_id';
+const STORAGE_KEY = CONVERSATION_STORAGE_KEY;
 
 export default function Chat() {
     const [conversationId, setConversationId] = useState(() => localStorage.getItem(STORAGE_KEY));

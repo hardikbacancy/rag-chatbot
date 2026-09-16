@@ -2,25 +2,26 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Conversation;
 use App\Services\RagChatService;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class MessageController extends Controller
 {
-    public function store(Request $request, Conversation $conversation, RagChatService $rag)
+    public function store(Request $request, string $conversation, RagChatService $rag)
     {
         $data = $request->validate([
             'content' => ['required', 'string', 'max:8000'],
         ]);
 
-        $conversation->messages()->create([
+        $conversation = $request->user()->conversations()->findOrFail($conversation);
+
+        $userMessage = $conversation->messages()->create([
             'role' => 'user',
             'content' => $data['content'],
         ]);
 
-        return new StreamedResponse(function () use ($conversation, $data, $rag) {
+        return new StreamedResponse(function () use ($conversation, $userMessage, $rag) {
             $emit = function (array $payload) {
                 echo 'data: '.json_encode($payload)."\n\n";
                 if (ob_get_level() > 0) {
@@ -31,7 +32,7 @@ class MessageController extends Controller
 
             $message = $rag->answer(
                 $conversation,
-                $data['content'],
+                $userMessage,
                 onSources: function (array $chunks) use ($emit) {
                     $emit([
                         'type' => 'sources',

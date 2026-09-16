@@ -22,6 +22,27 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Guest Mode
+    |--------------------------------------------------------------------------
+    |
+    | When enabled, the login screen is skipped and every visitor is signed in
+    | as the single shared account below. Ownership scoping stays in place, so
+    | switching this back off restores real per-user accounts untouched.
+    |
+    | Only for local demos: anyone who can reach the app gets full access to
+    | the guest account's documents and conversations.
+    |
+    */
+
+    'guest_mode' => (bool) env('AUTH_GUEST_MODE', false),
+
+    'guest_user' => [
+        'email' => env('AUTH_GUEST_EMAIL', 'guest@rag-chatbot.local'),
+        'name' => env('AUTH_GUEST_NAME', 'Guest'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Authentication Guards
     |--------------------------------------------------------------------------
     |

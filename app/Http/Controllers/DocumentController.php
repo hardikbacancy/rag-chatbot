@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Document;
 use App\Services\DocumentProcessingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -10,9 +9,9 @@ use Illuminate\Support\Str;
 
 class DocumentController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        return Document::latest()->get();
+        return $request->user()->documents()->latest()->get();
     }
 
     public function store(Request $request, DocumentProcessingService $processor)
@@ -32,7 +31,7 @@ class DocumentController extends Controller
 
         $storagePath = $file->storeAs('documents', Str::uuid().'.'.$extension);
 
-        $document = Document::create([
+        $document = $request->user()->documents()->create([
             'original_filename' => $file->getClientOriginalName(),
             'mime_type' => $file->getClientMimeType(),
             'file_size' => $file->getSize(),
@@ -45,8 +44,10 @@ class DocumentController extends Controller
         return response()->json($document->fresh(), 201);
     }
 
-    public function destroy(Document $document)
+    public function destroy(Request $request, string $document)
     {
+        $document = $request->user()->documents()->findOrFail($document);
+
         Storage::disk('local')->delete($document->storage_path);
         $document->delete();
 

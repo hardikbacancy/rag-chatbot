@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Document;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Testing\File;
 use Illuminate\Support\Facades\Http;
@@ -23,9 +24,10 @@ class DocumentUploadTest extends TestCase
             '*embedContent*' => Http::response($this->fakeEmbeddingResponse()),
         ]);
 
+        $user = User::factory()->create();
         $file = File::createWithContent('notes.txt', str_repeat('The sky is blue. ', 100));
 
-        $response = $this->postJson('/api/documents', ['file' => $file]);
+        $response = $this->actingAs($user)->postJson('/api/documents', ['file' => $file]);
 
         $response->assertCreated();
         $response->assertJsonPath('status', 'ready');
@@ -33,14 +35,16 @@ class DocumentUploadTest extends TestCase
 
         $document = Document::first();
         $this->assertNotNull($document);
+        $this->assertSame($user->id, $document->user_id);
         $this->assertGreaterThan(0, $document->chunks()->count());
     }
 
     public function test_unsupported_file_type_is_rejected(): void
     {
+        $user = User::factory()->create();
         $file = File::createWithContent('image.png', 'not-a-real-image');
 
-        $response = $this->postJson('/api/documents', ['file' => $file]);
+        $response = $this->actingAs($user)->postJson('/api/documents', ['file' => $file]);
 
         $response->assertStatus(422);
     }
@@ -49,14 +53,38 @@ class DocumentUploadTest extends TestCase
     {
         Http::fake(['*embedContent*' => Http::response($this->fakeEmbeddingResponse())]);
 
+        $user = User::factory()->create();
         $file = File::createWithContent('notes.txt', 'Some content to index.');
-        $this->postJson('/api/documents', ['file' => $file])->assertCreated();
+        $this->actingAs($user)->postJson('/api/documents', ['file' => $file])->assertCreated();
 
         $document = Document::first();
 
-        $this->getJson('/api/documents')->assertOk()->assertJsonCount(1);
+        $this->actingAs($user)->getJson('/api/documents')->assertOk()->assertJsonCount(1);
 
-        $this->deleteJson("/api/documents/{$document->id}")->assertNoContent();
+        $this->actingAs($user)->deleteJson("/api/documents/{$document->id}")->assertNoContent();
         $this->assertDatabaseMissing('documents', ['id' => $document->id]);
+    }
+
+    public function test_documents_are_private_to_their_owner(): void
+    {
+        Http::fake(['*embedContent*' => Http::response($this->fakeEmbeddingResponse())]);
+
+        $owner = User::factory()->create();
+        $file = File::createWithContent('notes.txt', 'Some content to index.');
+        $this->actingAs($owner)->postJson('/api/documents', ['file' => $file])->assertCreated();
+
+        $document = Document::first();
+        $stranger = User::factory()->create();
+
+        $this->actingAs($stranger)->getJson('/api/documents')->assertOk()->assertJsonCount(0);
+        $this->actingAs($stranger)->deleteJson("/api/documents/{$document->id}")->assertNotFound();
+
+        $this->assertDatabaseHas('documents', ['id' => $document->id]);
+    }
+
+    public function test_guests_cannot_reach_the_document_endpoints(): void
+    {
+        $this->getJson('/api/documents')->assertUnauthorized();
+        $this->postJson('/api/documents', [])->assertUnauthorized();
     }
 }

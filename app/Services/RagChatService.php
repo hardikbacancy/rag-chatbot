@@ -8,10 +8,15 @@ use Illuminate\Support\Facades\DB;
 
 class RagChatService
 {
+    /** Number of previous messages replayed to the model as conversation memory. */
+    private const HISTORY_LIMIT = 10;
+
     private const GROUNDING_PROMPT = <<<'PROMPT'
         You are a document-grounded assistant.
-        Answer ONLY using the provided document context.
+        Answer ONLY using the document context provided in the latest message.
         Do not use outside knowledge or invent information.
+        Earlier turns in this conversation are there to resolve references such as
+        "it" or "that year"; they are not a source of facts on their own.
         If the context does not contain enough information to answer,
         say that the uploaded documents do not contain enough information.
         PROMPT;
@@ -21,7 +26,7 @@ class RagChatService
     /**
      * @return array{chunk_id: int, content: string, filename: string, chunk_index: int, metadata: ?array, similarity: float}[]
      */
-    public function retrieveRelevantChunks(string $question): array
+    public function retrieveRelevantChunks(string $question, int $userId): array
     {
         $embedding = $this->gemini->embed($question, 'RETRIEVAL_QUERY');
         $vectorLiteral = '['.implode(',', $embedding).']';
@@ -33,10 +38,10 @@ class RagChatService
                     1 - (dc.embedding <=> ?::vector) AS similarity
              FROM document_chunks dc
              JOIN documents d ON d.id = dc.document_id
-             WHERE d.status = ?
+             WHERE d.status = ? AND d.user_id = ?
              ORDER BY dc.embedding <=> ?::vector
              LIMIT ?',
-            [$vectorLiteral, 'ready', $vectorLiteral, $topK]
+            [$vectorLiteral, 'ready', $userId, $vectorLiteral, $topK]
         );
 
         return array_map(fn ($row) => [
@@ -63,13 +68,24 @@ class RagChatService
             PROMPT;
     }
 
-    public function answer(Conversation $conversation, string $question, callable $onSources, callable $onToken): Message
+    public function answer(Conversation $conversation, Message $userMessage, callable $onSources, callable $onToken): Message
     {
-        $chunks = $this->retrieveRelevantChunks($question);
-        $onSources($chunks);
-        $prompt = $this->buildPrompt($question, $chunks);
+        $question = $userMessage->content;
 
-        $answerText = $this->gemini->streamAnswer(self::GROUNDING_PROMPT, $prompt, $onToken);
+        $chunks = $this->retrieveRelevantChunks(
+            $this->retrievalQuery($conversation, $userMessage),
+            $conversation->user_id,
+        );
+
+        $onSources($chunks);
+
+        $contents = $this->historyContents($conversation, $userMessage);
+        $contents[] = [
+            'role' => 'user',
+            'parts' => [['text' => $this->buildPrompt($question, $chunks)]],
+        ];
+
+        $answerText = $this->gemini->streamAnswer(self::GROUNDING_PROMPT, $contents, $onToken);
 
         $message = $conversation->messages()->create([
             'role' => 'assistant',
@@ -85,5 +101,51 @@ class RagChatService
         }
 
         return $message->load('sources.chunk.document');
+    }
+
+    /**
+     * A follow-up like "and in 2024?" embeds poorly on its own, so the previous
+     * question is prepended to give the vector search something to match against.
+     */
+    private function retrievalQuery(Conversation $conversation, Message $userMessage): string
+    {
+        $previousQuestion = $conversation->messages()
+            ->where('id', '<', $userMessage->id)
+            ->where('role', 'user')
+            ->orderByDesc('id')
+            ->value('content');
+
+        return $previousQuestion === null
+            ? $userMessage->content
+            : $previousQuestion."\n".$userMessage->content;
+    }
+
+    /**
+     * The last few turns as Gemini `contents`. Gemini expects the exchange to
+     * start with a user turn, so any leading assistant turns are dropped.
+     *
+     * @return array<int, array{role: string, parts: array<int, array{text: string}>}>
+     */
+    private function historyContents(Conversation $conversation, Message $userMessage): array
+    {
+        $history = $conversation->messages()
+            ->where('id', '<', $userMessage->id)
+            ->orderByDesc('id')
+            ->limit(self::HISTORY_LIMIT)
+            ->get()
+            ->reverse()
+            ->values();
+
+        while ($history->isNotEmpty() && $history->first()->role !== 'user') {
+            $history->shift();
+        }
+
+        return $history
+            ->map(fn (Message $message) => [
+                'role' => $message->role === 'assistant' ? 'model' : 'user',
+                'parts' => [['text' => $message->content]],
+            ])
+            ->values()
+            ->all();
     }
 }

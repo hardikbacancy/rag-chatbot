@@ -30,7 +30,9 @@ export default function Sidebar({ documents, onDocumentsChanged }) {
         }
     }
 
-    async function handleDelete(id) {
+    async function handleDelete(id, filename) {
+        if (!window.confirm(`Delete "${filename}"? This cannot be undone.`)) return;
+
         try {
             await deleteDocument(id);
             await onDocumentsChanged();
@@ -69,7 +71,7 @@ export default function Sidebar({ documents, onDocumentsChanged }) {
                         <div className="flex items-start justify-between gap-2">
                             <span className="break-all font-medium text-slate-800">{doc.original_filename}</span>
                             <button
-                                onClick={() => handleDelete(doc.id)}
+                                onClick={() => handleDelete(doc.id, doc.original_filename)}
                                 className="shrink-0 text-xs text-slate-400 hover:text-red-600"
                                 title="Delete document"
                             >

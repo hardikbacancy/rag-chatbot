@@ -56,18 +56,24 @@ class GeminiClient
     /**
      * Streams the assistant answer, invoking $onToken for each text chunk as it arrives.
      * Returns the full concatenated answer text.
+     *
+     * @param  array<int, array{role: string, parts: array<int, array{text: string}>}>  $contents
+     *                                                                                             The conversation so far, oldest first, ending with the current user turn.
      */
-    public function streamAnswer(string $systemInstruction, string $userPrompt, callable $onToken): string
+    public function streamAnswer(string $systemInstruction, array $contents, callable $onToken): string
     {
         $response = Http::withHeaders(['x-goog-api-key' => $this->apiKey])
             ->withOptions(['stream' => true])
+            // A total-response timeout makes no sense for a long-lived stream, and
+            // Guzzle's stream handler fails to open the connection at all when one
+            // is set. Bound the connect phase instead and let the body run long.
+            ->connectTimeout(10)
+            ->timeout(0)
             ->post("{$this->baseUrl}/models/{$this->chatModel}:streamGenerateContent?alt=sse", [
                 'system_instruction' => [
                     'parts' => [['text' => $systemInstruction]],
                 ],
-                'contents' => [
-                    ['role' => 'user', 'parts' => [['text' => $userPrompt]]],
-                ],
+                'contents' => $contents,
             ]);
 
         if ($response->failed()) {
@@ -97,7 +103,13 @@ class GeminiClient
                     }
 
                     $decoded = json_decode($json, true);
-                    $piece = $decoded['candidates'][0]['content']['parts'][0]['text'] ?? '';
+
+                    // A candidate can carry several parts; non-text ones (such as
+                    // thought signatures) simply contribute nothing.
+                    $piece = collect($decoded['candidates'][0]['content']['parts'] ?? [])
+                        ->pluck('text')
+                        ->filter(fn ($text) => is_string($text))
+                        ->implode('');
 
                     if ($piece !== '') {
                         $fullText .= $piece;
