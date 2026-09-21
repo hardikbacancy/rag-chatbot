@@ -20,6 +20,10 @@
     <php>
         <env name="APP_ENV" value="testing"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
+        <!-- Pinned regardless of local .env, so the "guests cannot reach..."
+             tests and the login flow stay deterministic no matter which mode
+             the developer's own app is running in. -->
+        <env name="AUTH_GUEST_MODE" value="false"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
